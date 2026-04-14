@@ -58,23 +58,6 @@ public class CodeStyleSkill extends BaseAISkill {
     }
 
     /**
-     * 执行技能
-     *
-     * @param context 技能上下文
-     * @return 技能执行结果
-     */
-    @Override
-    public CompletableFuture<SkillResult> execute(SkillContext context) {
-        return CompletableFuture.supplyAsync(() -> {
-            long startTime = System.currentTimeMillis();
-            String code = context.getCodeContent();
-            
-            List<SkillResult.Issue> issues = analyzeWithAI(code);
-            return buildResult(issues, startTime);
-        });
-    }
-
-    /**
      * 获取 AI 提示词
      *
      * @param code 待检查的代码

@@ -58,23 +58,6 @@ public class DocumentationSkill extends BaseAISkill {
     }
 
     /**
-     * 技能执行
-     *
-     * @param context 上下文
-     * @return 执行结果
-     */
-    @Override
-    public CompletableFuture<SkillResult> execute(SkillContext context) {
-        return CompletableFuture.supplyAsync(() -> {
-            long startTime = System.currentTimeMillis();
-            String code = context.getCodeContent();
-            
-            List<SkillResult.Issue> issues = analyzeWithAI(code);
-            return buildResult(issues, startTime);
-        });
-    }
-
-    /**
      * 获取 AI 提示
      *
      * @param code 代码

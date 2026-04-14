@@ -9,6 +9,7 @@
 package com.jensen.codereview.skill.base;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 /**
  * @ClassName Skill
@@ -36,6 +37,16 @@ public interface Skill {
      * @return 执行结果
      */
     CompletableFuture<SkillResult> execute(SkillContext context);
+
+    /**
+     * 技能执行（指定线程池）
+     * @param context 上下文
+     * @param executor 线程池
+     * @return 执行结果
+     */
+    default CompletableFuture<SkillResult> execute(SkillContext context, Executor executor) {
+        return execute(context);
+    }
 
     /**
      * 技能优先级

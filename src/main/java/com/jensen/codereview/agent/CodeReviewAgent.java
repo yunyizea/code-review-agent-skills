@@ -51,96 +51,80 @@ public class CodeReviewAgent {
     private String modelName;
 
     /**
+     * 是否启用 AI 总结
+     */
+    @Value("${code-review.ai-summary.enabled:true}")
+    private boolean aiSummaryEnabled;
+
+    /**
+     * AI 总结最大 token 数
+     */
+    @Value("${code-review.ai-summary.max-tokens:1500}")
+    private int aiSummaryMaxTokens;
+
+    /**
      * 代码审查
      * @param codeContent 代码内容
      * @return 审查结果
      */
     public String review(String codeContent) {
         log.info("开始代码审查");
+        long startTime = System.currentTimeMillis();
 
         // 1. 创建上下文
         SkillContext context = SkillContext.create(codeContent);
 
-        // 2. 执行技能链
-        var results = orchestrator.executeSequential(context);
+        // 2. 并行执行技能链（提升速度）
+        var results = orchestrator.executeParallel(context).join();
         SkillResult aggregated = orchestrator.mergeResults(results);
+        log.info("Skills 并行执行完成，耗时: {}ms", System.currentTimeMillis() - startTime);
 
-        // 3. AI 增强总结
-        String aiSummary = generateAISummary(codeContent, aggregated);
+        // 3. AI 增强总结（可配置关闭以提升速度）
+        String aiSummary;
+        if (aiSummaryEnabled) {
+            aiSummary = generateAISummary(codeContent, aggregated);
+            log.info("AI 总结完成，总耗时: {}ms", System.currentTimeMillis() - startTime);
+        } else {
+            aiSummary = "⚡ 快速模式：已跳过 AI 深度分析，仅展示规则审查结果";
+            log.info("快速模式：跳过 AI 总结，总耗时: {}ms", System.currentTimeMillis() - startTime);
+        }
 
         // 4. 生成最终报告
         return buildFinalReport(aggregated, aiSummary);
     }
 
     /**
-     * AI 总结
+     * AI 总结（优化版 - 快速响应）
      * @param code 源码
      * @param result 技能结果
      * @return 总结
      */
     private String generateAISummary(String code, SkillResult result) {
         try {
-            // 限制代码长度，避免超出 token 限制
-            String codeSnippet = code.length() > 3000 ? code.substring(0, 3000) + "\n...[代码过长，已截断]" : code;
+            long aiStartTime = System.currentTimeMillis();
             
+            // 限制代码长度，避免超出 token 限制
+            String codeSnippet = code.length() > 2000 ? code.substring(0, 2000) + "\n...[截断]" : code;
+            
+            // 简化的 Prompt，聚焦核心问题
             String prompt = String.format("""
-                你是一位拥有15年经验的资深Java架构师和技术专家，擅长代码审查、架构设计和性能优化。
+                你是一位资深 Java 架构师。请基于以下代码和审查发现，提供简洁专业的分析：
                 
-                请基于以下【待审查代码】和【审查发现】，从架构师视角进行深度分析和专业评估：
-                
-                【待审查代码】
+                【代码片段】
                 ```java
                 %s
                 ```
                 
-                【审查发现汇总】
-                %s
+                【审查发现】%s
+                【问题统计】总数:%d | 严重:%d | 高危:%d | 中危:%d | 低危:%d
                 
-                【问题统计】
-                - 问题总数：%d个
-                - 严重问题：%d个
-                - 高危问题：%d个
-                - 中危问题：%d个
-                - 低危问题：%d个
+                请提供：
+                1. **总体评分**（0-100分）和一句话评价
+                2. **Top 3 关键问题**（最严重的3个问题，简明扼要）
+                3. **核心改进建议**（2-3条最重要的建议）
+                4. **重构示例**（如果有严重问题，提供简短的代码改进示例）
                 
-                请以专业的架构师视角，结合上述代码实际情况，提供以下维度的深度分析：
-                
-                ## 一、总体评价
-                基于代码实际情况，从代码质量、架构设计、可维护性、可扩展性等维度给出综合评价（100分制）
-                
-                ## 二、核心问题分析
-                结合代码中的具体问题，按优先级列出最关键的3-5个问题，每个问题包含：
-                - 问题描述：详细说明问题的本质，引用代码中的具体位置和内容
-                - 风险等级：CRITICAL/HIGH/MEDIUM/LOW
-                - 业务影响：对系统稳定性、性能、安全性的具体影响
-                - 技术债务：可能带来的长期维护成本
-                
-                ## 三、架构层面建议
-                针对当前代码，从以下角度提供改进建议：
-                1. 设计模式应用：是否合理使用了设计模式，有无过度设计或设计不足
-                2. 代码结构：分层是否清晰，职责是否单一，耦合度是否合理
-                3. 性能优化：是否存在性能瓶颈，如何优化（给出具体的代码改进示例）
-                4. 安全性：是否存在安全隐患，如何加固（指出代码中的具体安全问题）
-                5. 可维护性：代码可读性、可测试性、可扩展性如何提升
-                
-                ## 四、最佳实践推荐
-                结合行业最佳实践，给出具体的改进方案和代码示例，展示如何重构这段代码
-                
-                ## 五、优先级行动计划
-                给出分阶段的改进建议：
-                - 立即修复（P0）：必须马上解决的问题，说明原因
-                - 短期优化（P1）：1-2周内可以完成的优化
-                - 中期改进（P2）：1-2个月内的改进计划
-                - 长期规划（P3）：架构层面的长期优化方向
-                
-                要求：
-                1. **必须紧密结合提供的代码进行分析**，引用代码中的具体内容
-                2. 语言专业、严谨，体现架构师的深度思考
-                3. 建议具体、可落地，避免空泛的理论
-                4. 结合实际情况，权衡利弊，给出最优方案
-                5. 使用技术术语要准确，必要时提供解释
-                6. 重点突出，层次分明，便于团队理解和执行
-                7. 对于关键问题，提供重构后的代码示例
+                要求：简洁、专业、实用，控制在500字以内。
                 """,
                     codeSnippet,
                     result.getSummary(),
@@ -151,15 +135,20 @@ public class CodeReviewAgent {
                     result.getIssues().stream().filter(i -> "LOW".equals(i.getSeverity())).count()
             );
 
+            log.info("开始 AI 总结，Prompt 长度: {} 字符", prompt.length());
+            
             ChatResponse response = chatClient.prompt()
                     .user(prompt)
                     .options(OpenAiChatOptions.builder()
                             .model(modelName)
                             .temperature(0.3)
-                            .maxTokens(4000)
+                            .maxTokens(aiSummaryMaxTokens)
                             .build())
                     .call()
                     .chatResponse();
+
+            long aiElapsed = System.currentTimeMillis() - aiStartTime;
+            log.info("AI 总结完成，耗时: {}ms", aiElapsed);
 
             return response != null ? response.getResult().getOutput().getText() : "AI总结生成失败";
         } catch (Exception e) {
@@ -169,7 +158,7 @@ public class CodeReviewAgent {
     }
 
     /**
-     * 生成最终报告
+     * 生成最终报告（Markdown 格式）
      * @param result 技能结果
      * @param aiSummary AI总结
      * @return 最终报告
@@ -177,50 +166,41 @@ public class CodeReviewAgent {
     private String buildFinalReport(SkillResult result, String aiSummary) {
         StringBuilder report = new StringBuilder();
         
-        // 报告头部
-        report.append("\n");
-        report.append("╔" + "═".repeat(78) + "╗\n");
-        report.append("║" + centerText("🎯 Java 代码架构审查报告", 78) + "║\n");
-        report.append("╚" + "═".repeat(78) + "╝\n\n");
-        
         // 审查概览
-        report.append("┌" + "─".repeat(78) + "┐\n");
-        report.append("│" + centerText("📊 审查概览", 78) + "│\n");
-        report.append("└" + "─".repeat(78) + "┘\n\n");
+        report.append("## 📊 概览\n\n");
         
         long criticalCount = result.getIssues().stream().filter(i -> "CRITICAL".equals(i.getSeverity())).count();
         long highCount = result.getIssues().stream().filter(i -> "HIGH".equals(i.getSeverity())).count();
         long mediumCount = result.getIssues().stream().filter(i -> "MEDIUM".equals(i.getSeverity())).count();
         long lowCount = result.getIssues().stream().filter(i -> "LOW".equals(i.getSeverity())).count();
         
-        report.append(String.format("   🔴 严重问题 (CRITICAL): %d 个\n", criticalCount));
-        report.append(String.format("   🟠 高危问题 (HIGH):     %d 个\n", highCount));
-        report.append(String.format("   🟡 中危问题 (MEDIUM):   %d 个\n", mediumCount));
-        report.append(String.format("   🔵 低危问题 (LOW):      %d 个\n", lowCount));
-        report.append(String.format("   📈 问题总数:            %d 个\n", result.getIssues().size()));
-        report.append(String.format("   ⏱️  审查耗时:            %d ms\n\n", result.getExecutionTimeMs()));
+        report.append("| 指标 | 数量 |\n");
+        report.append("|------|------|\n");
+        report.append(String.format("| 🔴 严重问题 (CRITICAL) | %d 个 |\n", criticalCount));
+        report.append(String.format("| 🟠 高危问题 (HIGH) | %d 个 |\n", highCount));
+        report.append(String.format("| 🟡 中危问题 (MEDIUM) | %d 个 |\n", mediumCount));
+        report.append(String.format("| 🔵 低危问题 (LOW) | %d 个 |\n", lowCount));
+        report.append(String.format("| 📈 问题总数 | %d 个 |\n", result.getIssues().size()));
+        report.append(String.format("| ⏱️ 审查耗时 | %d ms |\n\n", result.getExecutionTimeMs()));
         
         // AI 深度分析
-        report.append("┌" + "─".repeat(78) + "┐\n");
-        report.append("│" + centerText("🧠 架构师深度分析", 78) + "│\n");
-        report.append("└" + "─".repeat(78) + "┘\n\n");
+        report.append("## 🧠 深度分析\n\n");
         report.append(aiSummary).append("\n\n");
         
-        // 智能问题分类汇总（替代原有的简单列表）
+        // 智能问题分类汇总
         if (!result.getIssues().isEmpty()) {
             report.append(buildSmartIssueSummary(result.getIssues()));
         }
         
         // 报告尾部
-        report.append("╔" + "═".repeat(78) + "╗\n");
-        report.append("║" + centerText("✅ 审查完成 | 专业 · 深入 · 可落地", 78) + "║\n");
-        report.append("╚" + "═".repeat(78) + "╝\n");
+        report.append("---\n\n");
+        report.append("专业 · 深入 · 可落地\n");
         
         return report.toString();
     }
     
     /**
-     * 构建智能问题分类汇总
+     * 构建智能问题分类汇总（Markdown 格式）
      * @param issues 问题列表
      * @return 格式化后的问题汇总
      */
@@ -237,37 +217,33 @@ public class CodeReviewAgent {
                         issue -> issue.getCategory() != null ? issue.getCategory() : "OTHER"
                 ));
         
-        summary.append("┌" + "─".repeat(78) + "┐\n");
-        summary.append("│" + centerText("📋 问题分类汇总", 78) + "│\n");
-        summary.append("└" + "─".repeat(78) + "┘\n\n");
+        summary.append("## 📋 问题分类汇总\n\n");
         
         // 只显示关键问题（CRITICAL 和 HIGH）
         List<SkillResult.Issue> criticalIssues = groupedBySeverity.getOrDefault("CRITICAL", new ArrayList<>());
         List<SkillResult.Issue> highIssues = groupedBySeverity.getOrDefault("HIGH", new ArrayList<>());
         
         if (!criticalIssues.isEmpty() || !highIssues.isEmpty()) {
-            summary.append("⚠️  **需要立即关注的关键问题**\n\n");
+            summary.append("### ⚠️ 需要立即关注的关键问题\n\n");
             
             int issueNum = 1;
             
             // 严重问题
             for (SkillResult.Issue issue : criticalIssues) {
-                summary.append(String.format("%d. 🔴 [严重] %s\n", issueNum++, issue.getDescription()));
+                summary.append(String.format("#### %d. 🔴 [严重] %s\n\n", issueNum++, issue.getDescription()));
                 if (issue.getLineNumber() != null && issue.getLineNumber() > 0) {
-                    summary.append(String.format("   📍 位置: 第 %d 行\n", issue.getLineNumber()));
+                    summary.append(String.format("- **📍 位置**: 第 %d 行\n", issue.getLineNumber()));
                 }
-                summary.append(String.format("   💡 建议: %s\n", issue.getFixSuggestion()));
-                summary.append("\n");
+                summary.append(String.format("- **💡 建议**: %s\n\n", issue.getFixSuggestion()));
             }
             
             // 高危问题
             for (SkillResult.Issue issue : highIssues) {
-                summary.append(String.format("%d. 🟠 [高危] %s\n", issueNum++, issue.getDescription()));
+                summary.append(String.format("#### %d. 🟠 [高危] %s\n\n", issueNum++, issue.getDescription()));
                 if (issue.getLineNumber() != null && issue.getLineNumber() > 0) {
-                    summary.append(String.format("   📍 位置: 第 %d 行\n", issue.getLineNumber()));
+                    summary.append(String.format("- **📍 位置**: 第 %d 行\n", issue.getLineNumber()));
                 }
-                summary.append(String.format("   💡 建议: %s\n", issue.getFixSuggestion()));
-                summary.append("\n");
+                summary.append(String.format("- **💡 建议**: %s\n\n", issue.getFixSuggestion()));
             }
         }
         
@@ -277,7 +253,11 @@ public class CodeReviewAgent {
                 .toList();
         
         if (!mediumAndLow.isEmpty()) {
-            summary.append("\n📊 **其他问题统计**（共 " + mediumAndLow.size() + " 个，建议逐步优化）\n\n");
+            summary.append("### 📊 其他问题统计\n\n");
+            summary.append(String.format("共 **%d** 个问题，建议逐步优化\n\n", mediumAndLow.size()));
+            
+            summary.append("| 问题类别 | 数量 |\n");
+            summary.append("|----------|------|\n");
             
             groupedByCategory.forEach((category, categoryIssues) -> {
                 long count = categoryIssues.stream()
@@ -285,14 +265,12 @@ public class CodeReviewAgent {
                         .count();
                 if (count > 0) {
                     String categoryName = getCategoryDisplayName(category);
-                    summary.append(String.format("   • %s: %d 个问题\n", categoryName, count));
+                    summary.append(String.format("| %s | %d 个 |\n", categoryName, count));
                 }
             });
             
-            summary.append("\n💡 提示: 以上问题已在「架构师深度分析」中给出综合改进建议\n");
+            summary.append("\n> 💡 **提示**: 以上问题已在「架构师深度分析」中给出综合改进建议\n");
         }
-        
-        summary.append("\n" + "   " + "-".repeat(76) + "\n\n");
         
         return summary.toString();
     }

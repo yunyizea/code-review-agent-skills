@@ -8,6 +8,8 @@
  */
 package com.jensen.codereview.config;
 
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -23,28 +25,47 @@ import java.util.concurrent.ThreadPoolExecutor;
  * @Author Jensen
  * @Date 2026/4/14 14:42
  */
+@Slf4j
 @EnableAsync
 @Configuration
 public class AsyncSchedulingConfig {
 
-    // 可从配置文件读取参数，方便不同环境调整
-    private static final int CORE_POOL_SIZE = 10;
-    private static final int MAX_POOL_SIZE = 50;
-    private static final int QUEUE_CAPACITY = 100;
+    /**
+     * 核心线程数
+     */
+    @Value("${code-review.thread-pool.core-size:20}")
+    private int corePoolSize;
 
     /**
-     * 自定义异步任务线程池，替代Spring默认实现
+     * 最大线程数
+     */
+    @Value("${code-review.thread-pool.max-size:50}")
+    private int maxPoolSize;
+
+    /**
+     * 队列容量
+     */
+    @Value("${code-review.thread-pool.queue-capacity:200}")
+    private int queueCapacity;
+
+    /**
+     * 自定义异步任务线程池，用于并行执行 AI Skills
      */
     @Bean("asyncTaskExecutor")
     public Executor asyncTaskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(CORE_POOL_SIZE);
-        executor.setMaxPoolSize(MAX_POOL_SIZE);
-        executor.setQueueCapacity(QUEUE_CAPACITY);
-        executor.setThreadNamePrefix("async-task-");
+        executor.setCorePoolSize(corePoolSize);
+        executor.setMaxPoolSize(maxPoolSize);
+        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix("ai-skill-");
         // 拒绝策略：由调用线程处理，避免任务丢弃
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(60);
         executor.initialize();
+        
+        log.info("AI Skill 线程池初始化: core={}, max={}, queue={}", 
+                corePoolSize, maxPoolSize, queueCapacity);
         return executor;
     }
 

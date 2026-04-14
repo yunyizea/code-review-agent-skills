@@ -18,12 +18,28 @@ server:
 
 logging:
   level:
-    com.jensen.codereview: DEBUG
-    org.springframework.ai: DEBUG
-    org.springframework.ai.openai: DEBUG
+    com.jensen.codereview: INFO  # 改为 INFO 减少日志输出，提升性能
+    org.springframework.ai: WARN  # 减少 Spring AI 的日志输出
+    org.springframework.ai.openai: WARN
 
+# 代码审查配置
 code-review:
   enabled: true
   max-file-size: 1MB
   supported-languages:
     - java
+  # 线程池配置
+  thread-pool:
+    core-size: 20      # 核心线程数（支持并发 AI 调用）
+    max-size: 50       # 最大线程数
+    queue-capacity: 200 # 队列容量
+  # 超时配置（毫秒）
+  timeout:
+    skill-execution: 60000  # 单个 Skill 执行超时 60秒
+    total-review: 120000    # 总审查超时 120秒
+  # AI 总结配置
+  ai-summary:
+    enabled: true           # 是否启用 AI 总结（关闭可大幅提升速度）
+    max-code-length: 2000   # 代码片段最大长度
+    max-tokens: 1500        # AI 响应最大 token 数
+    temperature: 0.3        # 温度参数

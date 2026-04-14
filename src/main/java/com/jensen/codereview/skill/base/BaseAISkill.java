@@ -16,6 +16,8 @@ import org.springframework.beans.factory.annotation.Value;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -74,6 +76,43 @@ public abstract class BaseAISkill implements Skill {
             log.error("AI 分析失败: {}", getName(), e);
             return new ArrayList<>();
         }
+    }
+
+    /**
+     * 执行技能（默认使用 ForkJoinPool）
+     * @param context 上下文
+     * @return 执行结果
+     */
+    @Override
+    public CompletableFuture<SkillResult> execute(SkillContext context) {
+        return CompletableFuture.supplyAsync(() -> {
+            long startTime = System.currentTimeMillis();
+            String code = context.getCodeContent();
+            
+            List<SkillResult.Issue> issues = analyzeWithAI(code);
+            return buildResult(issues, startTime);
+        });
+    }
+
+    /**
+     * 执行技能（指定线程池）
+     * @param context 上下文
+     * @param executor 线程池
+     * @return 执行结果
+     */
+    @Override
+    public CompletableFuture<SkillResult> execute(SkillContext context, Executor executor) {
+        return CompletableFuture.supplyAsync(() -> {
+            long startTime = System.currentTimeMillis();
+            String code = context.getCodeContent();
+            
+            log.info("[{}] 开始 AI 分析，代码长度: {} 字符", getName(), code.length());
+            List<SkillResult.Issue> issues = analyzeWithAI(code);
+            long elapsed = System.currentTimeMillis() - startTime;
+            log.info("[{}] AI 分析完成，耗时: {}ms，发现问题: {}", getName(), elapsed, issues.size());
+            
+            return buildResult(issues, startTime);
+        }, executor);
     }
 
     /**

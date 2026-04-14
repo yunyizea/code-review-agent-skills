@@ -14,9 +14,11 @@ import com.jensen.codereview.skill.base.SkillResult;
 import com.jensen.codereview.skill.registry.SkillRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
@@ -34,6 +36,12 @@ public class SkillOrchestrator {
      * 技能注册中心
      */
     private final SkillRegistry skillRegistry;
+
+    /**
+     * 代码审查专用线程池
+     */
+    @Qualifier("asyncTaskExecutor")
+    private final Executor asyncTaskExecutor;
 
     /**
      * 顺序执行技能
@@ -68,14 +76,34 @@ public class SkillOrchestrator {
      * @return 技能结果列表
      */
     public CompletableFuture<List<SkillResult>> executeParallel(SkillContext context) {
+        log.info("开始并行执行 {} 个技能", skillRegistry.getEnabledSkills().size());
+        long startTime = System.currentTimeMillis();
+        
         List<CompletableFuture<SkillResult>> futures = skillRegistry.getEnabledSkills().stream()
-                .map(skill -> skill.execute(context))
+                .map(skill -> {
+                    log.info("提交技能到线程池: {}", skill.getName());
+                    return skill.execute(context, asyncTaskExecutor)
+                            .whenComplete((result, error) -> {
+                                if (error != null) {
+                                    log.error("技能执行异常: {}, 耗时: {}ms", skill.getName(), System.currentTimeMillis() - startTime, error);
+                                } else {
+                                    log.info("技能完成: {}, 耗时: {}ms, 发现问题: {}", 
+                                            skill.getName(), 
+                                            System.currentTimeMillis() - startTime,
+                                            result.getIssues().size());
+                                }
+                            });
+                })
                 .collect(Collectors.toList());
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenApply(v -> futures.stream()
-                        .map(CompletableFuture::join)
-                        .collect(Collectors.toList()));
+                .thenApply(v -> {
+                    List<SkillResult> results = futures.stream()
+                            .map(CompletableFuture::join)
+                            .collect(Collectors.toList());
+                    log.info("所有技能执行完成，总耗时: {}ms", System.currentTimeMillis() - startTime);
+                    return results;
+                });
     }
 
     /**
@@ -87,6 +115,12 @@ public class SkillOrchestrator {
         List<SkillResult.Issue> allIssues = new ArrayList<>();
         List<SkillResult.Suggestion> allSuggestions = new ArrayList<>();
         Map<String, Object> aggregatedMetrics = new HashMap<>();
+        
+        // 计算总执行时间（取所有 Skills 中的最大耗时）
+        long maxExecutionTime = results.stream()
+                .mapToLong(r -> r.getExecutionTimeMs() != null ? r.getExecutionTimeMs() : 0)
+                .max()
+                .orElse(0);
 
         for (SkillResult result : results) {
             if (result.getIssues() != null) {
@@ -112,6 +146,7 @@ public class SkillOrchestrator {
                 .issues(allIssues)
                 .suggestions(allSuggestions)
                 .metrics(aggregatedMetrics)
+                .executionTimeMs(maxExecutionTime)
                 .build();
     }
 
